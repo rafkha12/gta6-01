@@ -122,6 +122,20 @@ export function stageShot(game, name) {
   walkForward(game, 1.2);
   idle(game, 2);
   game.traffic.populateNear(game.player.x, game.player.z);
+  // Three pedestrians right by the job marker, in frame, so the cover
+  // reads as a busy street instead of an empty one.
+  const target = game.missions.active.target;
+  const spots = [[-6, 4], [5, -5], [-2, 8]];
+  let n = 0;
+  for (const ped of game.traffic.peds) {
+    if (n >= 3) break;
+    ped.x = target.x + spots[n][0];
+    ped.z = target.z + spots[n][1];
+    const fixed = game.city.collideCircle(ped.x, ped.z, 0.5);
+    ped.x = fixed.x; ped.z = fixed.z;
+    ped.heading = Math.PI * (0.25 + n * 0.5);
+    n += 1;
+  }
   game.hud.toastTimer = 0;
   game.hud.el['hud-toast'].style.display = 'none';
   return 'On foot in the lunch crowd';
