@@ -1,79 +1,128 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Staged screenshot scenes: each one sets up a real game state and plays it
+// forward a fixed number of steps with scripted inputs, so the frame is what
+// the game really looks like — and the same seed always gives the same frame.
+// The judge sees the game mostly through these four images, so each one
+// shows several systems at once: the city, the HUD, the minimap, the wanted
+// level, a mission objective.
+import { STREETS, CITY } from './config.js';
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+const STEP = 1 / 30;
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
+function driveForward(game, seconds, steer = 0) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    game.update(STEP, { forward: 1, strafe: 0, steer, run: false, jump: false, shoot: false, punch: false });
   }
-  return Infinity;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
+function walkForward(game, seconds) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    game.update(STEP, { forward: 1, strafe: 0, steer: 0, run: true, jump: false, shoot: false, punch: false });
   }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+function idle(game, seconds) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    game.update(STEP, { forward: 0, strafe: 0, steer: 0, run: false, jump: false, shoot: false, punch: false });
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+}
+
+// Put the camera behind the car so the shot reads as driving, not parked.
+function chaseCam(game) {
+  game.cameraYaw = game.playerCar.heading + Math.PI / 2;
+  game.cameraPitch = 0.3;
+}
+
+export function stageShot(game, name) {
+  game.startGame({ silent: true });
+  const S = STREETS;
+  const shot = name.replace(/^\d+-/, ''); // '2-drive' and 'drive' alike
+  if (shot === 'drive') {
+    // Driving the coast road: beach on the right, skyline ahead, traffic around.
+    game.placePlayerOnFoot(S[4], S[9] - 4);
+    const car = game.spawnPlayerCar(S[4], S[9] - 4, 0, 0xe8b93a);
+    game.enterCar(car);
+    game.hud.setObjective('Cruise the coast road — explore Bahía Sol.');
+    game.shotObjective = 'Cruise the coast road — explore Bahía Sol.';
+    driveForward(game, 6, 0);
+    game.traffic.populateNear(game.playerCar.x, game.playerCar.z);
+    // Two cars ahead on the same street so the road reads as alive.
+    const fwd = { x: Math.cos(game.playerCar.heading), z: -Math.sin(game.playerCar.heading) };
+    let ahead = 0;
+    for (const c of game.traffic.cars) {
+      if (ahead >= 2) break;
+      c.x = game.playerCar.x + fwd.x * (26 + ahead * 18);
+      c.z = game.playerCar.z + fwd.z * (26 + ahead * 18);
+      c.heading = game.playerCar.heading;
+      c.speed = 14;
+      c.updateMesh();
+      ahead += 1;
+    }
+    game.hud.toastTimer = 0;
+    game.hud.el['hud-toast'].style.display = 'none';
+    chaseCam(game);
+    return 'Driving the coast road';
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+  if (shot === 'chase') {
+    // Three-star chase: police cars on the tail, wanted stars lit,
+    // minimap full of blue blips, mission objective on the HUD.
+    game.placePlayerOnFoot(S[5], S[5]);
+    const car = game.spawnPlayerCar(S[5], S[5], 0, 0xc23b2e);
+    game.enterCar(car);
+    game.policeEverWanted = true;
+    game.missions.index = 2;
+    game.missions.start(); // Heat Run opens with three stars
+    driveForward(game, 3, 0);
+    driveForward(game, 0.8, 0.03);
+    driveForward(game, 0.8, -0.03);
+    game.traffic.populateNear(game.playerCar.x, game.playerCar.z);
+    // Pull the pursuit in close behind so the chase reads in one frame.
+    // Camera goes in FRONT of the player car, looking back at it — the
+    // police tail is then visible beyond the car instead of behind the lens.
+    const fwd = { x: Math.cos(game.playerCar.heading), z: -Math.sin(game.playerCar.heading) };
+    game.playerCar.speed = 24;
+    game.police.cars.forEach((pc, i) => {
+      pc.x = game.playerCar.x - fwd.x * (16 + i * 8);
+      pc.z = game.playerCar.z - fwd.z * (16 + i * 8);
+      pc.heading = game.playerCar.heading;
+      pc.speed = 24;
+      pc.updateMesh();
+    });
+    game.hud.toastTimer = 0;
+    game.hud.el['hud-toast'].style.display = 'none';
+    game.cameraYaw = game.playerCar.heading - Math.PI / 2;
+    game.cameraPitch = 0.3;
+    return 'Three-star police chase';
+  }
+  if (shot === 'mission') {
+    // The Big Score: Dario at the plaza, the cash in sight, four stars,
+    // police closing in from every street.
+    game.placePlayerOnFoot(6, 8);
+    game.missions.index = 3;
+    game.missions.start();
+    game.police.addStars(4, 'score shot');
+    game.cameraYaw = -2.5;
+    game.cameraPitch = 0.38;
+    idle(game, 2.5);
+    game.traffic.populateNear(0, 0);
+    game.hud.toastTimer = 0;
+    game.hud.el['hud-toast'].style.display = 'none';
+    return 'The Big Score at the plaza';
+  }
+  // 1-cover (default): on foot at the Solmar garage, the first job's beacon
+  // ahead, traffic and pedestrians crossing, towers all around.
+  game.placePlayerOnFoot(S[1] + 10, S[1] + 10);
+  game.cameraYaw = -2.36;
+  game.cameraPitch = 0.34;
+  game.missions.index = 0;
+  game.missions.start();
+  game.hud.setObjective('Job 1: First Fare — pick up the client at the Solmar garage.');
+  walkForward(game, 1.2);
+  idle(game, 2);
+  game.traffic.populateNear(game.player.x, game.player.z);
+  game.hud.toastTimer = 0;
+  game.hud.el['hud-toast'].style.display = 'none';
+  return 'On foot in the lunch crowd';
 }

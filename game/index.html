@@ -3,16 +3,92 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
+<title>Bahía Sol — an open-world crime story</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23ffd23a'/%3E%3Ctext x='16' y='23' font-size='20' text-anchor='middle' font-family='sans-serif' font-weight='bold' fill='%23112'%3EB%3C/text%3E%3C/svg%3E">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c141c; font-family: 'Segoe UI', system-ui, sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .hud { position: absolute; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  .money { top: 14px; left: 16px; font-size: 26px; font-weight: 800; color: #7dff9a; }
+  .health { top: 48px; left: 16px; font-size: 11px; letter-spacing: 2px; font-weight: 700; }
+  .health .bar { width: 180px; height: 10px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); border-radius: 5px; overflow: hidden; }
+  .health .fill { height: 100%; width: 100%; background: #3aff7a; transition: width .2s; }
+  .wanted { top: 64px; right: 250px; font-size: 26px; color: #ffd23a; letter-spacing: 4px; display: none; }
+  .wanted .dim { color: rgba(255,255,255,.25); }
+  .objective { top: 14px; left: 50%; transform: translateX(-50%); max-width: 520px; text-align: center; font-size: 14px; font-weight: 600; background: rgba(0,0,0,.5); padding: 7px 14px; border-radius: 6px; display: none; }
+  .speed { bottom: 18px; left: 18px; font-size: 24px; font-weight: 800; display: none; }
+  .toast { bottom: 90px; left: 50%; transform: translateX(-50%); font-size: 17px; font-weight: 600; background: rgba(0,0,0,.62); padding: 9px 18px; border-radius: 8px; display: none; max-width: 640px; text-align: center; }
+  .mission { top: 90px; left: 16px; font-size: 13px; background: rgba(0,0,0,.5); padding: 8px 12px; border-radius: 6px; display: none; }
+  .minimap { top: 14px; right: 14px; width: 220px; height: 220px; border: 2px solid rgba(255,255,255,.65); border-radius: 6px; background: rgba(12,20,28,.8); }
+  #btn-job { position: absolute; bottom: 18px; right: 250px; pointer-events: auto; background: #ffd23a; color: #1a1a1a; border: none; font-weight: 800; font-size: 15px; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
+  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, rgba(10,24,40,.88), rgba(60,20,10,.82)); z-index: 10; color: #fff; }
+  .panel { max-width: 620px; text-align: center; padding: 30px; }
+  .panel h1 { font-size: 64px; letter-spacing: 8px; margin: 0; color: #ffd23a; text-shadow: 0 4px 0 #7a4a00, 0 8px 24px rgba(0,0,0,.6); }
+  .panel .tag { font-size: 18px; letter-spacing: 3px; text-transform: uppercase; color: #9fd8ff; margin: 6px 0 18px; }
+  .panel .story { font-size: 16px; line-height: 1.55; color: #f0ead8; }
+  .panel .controls { font-size: 13px; color: #c9d4de; margin: 16px 0; line-height: 1.7; }
+  .panel button, .screen button { background: #ffd23a; color: #1a1a1a; border: none; font-weight: 800; font-size: 18px; padding: 12px 30px; border-radius: 10px; cursor: pointer; margin: 4px; }
+  .panel button.ghost { background: transparent; color: #fff; border: 2px solid rgba(255,255,255,.6); }
+  .panel .fine { font-size: 13px; color: #b8c4cf; margin-top: 14px; }
+  #pause, #overlay, #mission-card { display: none; }
+  .card { background: rgba(8,18,28,.94); border: 1px solid #ffd23a; border-radius: 12px; max-width: 520px; padding: 26px 30px; text-align: left; color: #fff; }
+  .card h2 { margin: 0 0 4px; color: #ffd23a; font-size: 28px; }
+  .card .m-giver { color: #9fd8ff; font-weight: 700; margin-bottom: 12px; }
+  .card p { line-height: 1.55; font-size: 15px; }
+  .card .m-payout { font-weight: 800; color: #7dff9a; margin-top: 12px; }
+  .card .row { text-align: right; margin-top: 16px; }
+  .card button { font-size: 15px; padding: 10px 20px; }
+  .o-title { font-size: 52px; letter-spacing: 6px; color: #ff5a4a; margin: 0; text-align: center; }
+  .o-text { font-size: 17px; text-align: center; max-width: 520px; }
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
+<canvas id="game" aria-label="Bahía Sol: an open-world crime game. Walk and drive around a coastal city, steal cars, outrun the police and finish four jobs."></canvas>
+<div id="hud">
+  <div id="hud-money" class="hud money">$150</div>
+  <div id="hud-health" class="hud health"><div class="bar"><div class="fill"></div></div><span>HEALTH</span></div>
+  <div id="hud-wanted" class="hud wanted"></div>
+  <div id="hud-objective" class="hud objective"></div>
+  <div id="hud-speed" class="hud speed"></div>
+  <div id="hud-toast" class="hud toast"></div>
+  <div id="hud-mission" class="hud mission"></div>
+  <canvas id="hud-minimap" class="hud minimap" width="220" height="220"></canvas>
+  <button id="btn-job">JOB (M)</button>
+</div>
+<div id="menu" class="screen"><div class="panel"></div></div>
+<div id="pause" class="screen">
+  <div class="panel">
+    <h1 style="font-size:44px">PAUSED</h1>
+    <p class="story">Bahía Sol waits for no one — except right now.</p>
+    <button id="btn-pause-resume">Resume</button>
+    <button id="btn-pause-quit" class="ghost">Quit to menu</button>
+  </div>
+</div>
+<div id="overlay" class="screen">
+  <div class="panel">
+    <h1 class="o-title"></h1>
+    <p class="o-text"></p>
+    <button id="btn-overlay">Continue</button>
+  </div>
+</div>
+<div id="mission-card" class="screen">
+  <div class="card">
+    <h2 class="m-title"></h2>
+    <div class="m-giver"></div>
+    <p class="m-brief"></p>
+    <p class="m-objective"></p>
+    <p class="m-payout"></p>
+    <div class="row">
+      <button id="btn-mission-decline" class="ghost" style="background:transparent;color:#fff;border:2px solid rgba(255,255,255,.6)">Not now</button>
+      <button id="btn-mission-accept">Take the job</button>
+    </div>
+  </div>
+</div>
 <p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
 </body>
